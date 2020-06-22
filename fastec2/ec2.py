@@ -340,7 +340,8 @@ class EC2():
                 return inst
             except (ConnectionRefusedError,BlockingIOError): time.sleep(5)
 
-    def get_launch(self, name, ami, disksize:int=64, instancetype:str='p2.xlarge', keyname:str='default', secgroupname:str='ssh',
+    def get_launch(self, name, ami, instancetype:str='p2.xlarge',
+                   volname:str='pratik-moon', disksize:int=64, keyname:str='default', secgroupname:str='ssh',
                    iops:int=None, spot:bool=False):
         "Creates new instance `name` and returns `Instance` object"
         insts = self._describe('instances', {'tag:Name':name})
@@ -351,6 +352,7 @@ class EC2():
             inst = self._ec2r.Instance(sr.instance_id)
         else:
             inst = self.request_demand(ami, keyname, disksize, instancetype, secgroupid, iops)
+        self.attach_volume(inst, volname)
         self.waitfor('instance','running', inst.id)
         inst.load()
         self.create_name(inst.id, name)
@@ -360,7 +362,9 @@ class EC2():
 
     def ip(self, inst): return self.get_instance(inst).public_ip_address
 
-    def launch(self, name, ami, disksize:int=64, instancetype:str='p2.xlarge', keyname:str='pratik-macbook',
+    def launch(self, name, ami, instancetype:str='p2.xlarge',
+               volname:str='pratik-moon',
+               disksize:int=64, keyname:str='pratik-macbook',
                secgroupname:str='ssh', iops:int=None, spot:bool=False):
         print(self.get_launch(name, ami, disksize, instancetype, keyname, secgroupname, iops, spot))
 
