@@ -15,7 +15,9 @@ __all__ = 'EC2 result results snake2camel make_filter listify'.split()
 here = os.path.abspath(os.path.dirname(__file__)) + '/'
 
 def snake2camel(s, split='_'): return ''.join([w.title() for w in s.split(split)])
+
 def _make_dict(d:Dict):   return [{'Key':k, 'Value':  v } for k,v in (d or {}).items()]
+
 def _get_dict(l):
     if l is None: return None
     return collections.defaultdict(str, {o['Key']:o['Value'] for o in l})
@@ -191,9 +193,9 @@ class EC2():
         for ami in self.get_amis(description, owner, filt_func): print(ami)
 
     def get_ami(self, ami=None):
-        "Look up `ami` if provided, otherwise find latest Ubuntu 18.04 image"
+        "Look up `ami` if provided, otherwise find latest Ubuntu 20.04 image"
         if ami is None:
-            amis = self.get_amis('Canonical, Ubuntu, 18.04 LTS*',owner='099720109477',
+            amis = self.get_amis('Canonical, Ubuntu, 20.04 LTS*',owner='099720109477',
                                   filt_func=lambda o: not re.search(r'UNSUPPORTED|minimal', o.description))
             assert amis, 'AMI not found'
             return amis[0]
@@ -289,7 +291,9 @@ class EC2():
                  if iops else {'VolumeSize': disksize, 'VolumeType': 'gp2'})
         return { 'ImageId': ami.id, 'InstanceType': instancetype,
             'SecurityGroupIds': [secgroupid], 'KeyName': keyname,
-            "BlockDeviceMappings": [{ "DeviceName": "/dev/sda1", "Ebs": ebs, }] }
+            "BlockDeviceMappings": [{ "DeviceName": "/dev/sda1", "Ebs": ebs, }],
+            'Placement' : {'AvailabilityZone': 'us-east-1a'}
+            }
 
     def _get_request(self, srid):
         srs = self._describe('spot_instance_requests', {'spot-instance-request-id':srid})
@@ -301,6 +305,7 @@ class EC2():
 
     def create_name(self, resource_id, name):
         self.create_tag(resource_id, 'Name', name)
+        self.create_tag(resource_id, 'owner', os.environ['USER'])
 
     def remove_name(self, resource_id):
         self._ec2.delete_tags(Resources=[resource_id],Tags=[{"Key": 'Name'}])
@@ -335,7 +340,7 @@ class EC2():
                 return inst
             except (ConnectionRefusedError,BlockingIOError): time.sleep(5)
 
-    def get_launch(self, name, ami, disksize, instancetype, keyname:str='default', secgroupname:str='ssh',
+    def get_launch(self, name, ami, disksize:int=64, instancetype:str='p2.xlarge', keyname:str='default', secgroupname:str='ssh',
                    iops:int=None, spot:bool=False):
         "Creates new instance `name` and returns `Instance` object"
         insts = self._describe('instances', {'tag:Name':name})
@@ -355,7 +360,7 @@ class EC2():
 
     def ip(self, inst): return self.get_instance(inst).public_ip_address
 
-    def launch(self, name, ami, disksize, instancetype, keyname:str='default',
+    def launch(self, name, ami, disksize:int=64, instancetype:str='p2.xlarge', keyname:str='pratik-macbook',
                secgroupname:str='ssh', iops:int=None, spot:bool=False):
         print(self.get_launch(name, ami, disksize, instancetype, keyname, secgroupname, iops, spot))
 
@@ -385,23 +390,23 @@ class EC2():
 
     def connect(self, inst, ports=None, user=None, keyfile='~/.ssh/id_rsa'):
         """Replace python process with an ssh process connected to instance `inst`;
-        use `user@name` otherwise defaults to user 'ubuntu'. `ports` (int or list) creates tunnels"""
+        use `user@name` otherwise defaults to user 'pratik'. `ports` (int or list) creates tunnels"""
         if user is None:
             if isinstance(inst,str) and '@' in inst: user,inst = inst.split('@')
-            else: user = 'ubuntu'
+            else: user = 'pratik'
         inst = self.get_instance(inst)
         #tunnel = []
         tunnel = [f'-L {o}:localhost:{o}' for o in listify(ports)]
         os.execvp('ssh', ['ssh', f'{user}@{inst.public_ip_address}',
                           '-i', os.path.expanduser(keyfile), *tunnel])
 
-    def sshs(self, inst, user='ubuntu', keyfile='~/.ssh/id_rsa'):
+    def sshs(self, inst, user='pratik', keyfile='~/.ssh/id_rsa'):
         inst = self.get_instance(inst)
         ssh = self.ssh(inst, user=user, keyfile=keyfile)
         ftp = pysftp.Connection(ssh)
         return inst,ssh,ftp
 
-    def ssh(self, inst, user='ubuntu', keyfile='~/.ssh/id_rsa'):
+    def ssh(self, inst, user='pratik', keyfile='~/.ssh/id_rsa'):
         "Return a paramiko ssh connection objected connected to instance `inst`"
         inst = self.get_instance(inst)
         keyfile = os.path.expanduser(keyfile)
@@ -454,7 +459,7 @@ class EC2():
         ssh.send(f'echo To run: sudo systemctl start {script}')
         ssh.send(f'echo To monitor: journalctl -f -u {script}')
 
-    def script(self, scriptname, inst, user='ubuntu', keyfile='~/.ssh/id_rsa'):
+    def script(self, scriptname, inst, user='pratik', keyfile='~/.ssh/id_rsa'):
         inst = self.get_instance(inst)
         name = inst.name
         ssh = self.ssh(inst, user, keyfile)
@@ -490,23 +495,23 @@ def _setup_vol(ssh, vol):
     dev = _volid_to_dev(ssh, vol)
     cmds = [
         f'sudo mkfs -q -t ext4 {dev}',
-        f'sudo mkdir -p /mnt/fe2_disk',
-        f'sudo mount {dev} /mnt/fe2_disk',
-        f'sudo chown -R ubuntu /mnt/fe2_disk',
+        f'sudo mkdir -p /home/pratik',
+        f'sudo mount {dev} /home/pratik',
+        f'sudo chown -R pratik:pratik /home/pratik',
     ]
     for c in cmds: ssh.run(c)
     ssh.write('/mnt/fe2_disk/chk', 'ok')
 
 def _mount(ssh, vol, perm=False):
     dev = _volid_to_dev(ssh, vol)
-    ssh.run(f'sudo mkdir -p /mnt/fe2_disk')
+    ssh.run(f'sudo mkdir -p /home/pratik')
     if perm:
-        ssh.run(f"echo '{dev} /mnt/fe2_disk ext4 defaults 0 0' | sudo tee -a /etc/fstab")
+        ssh.run(f"echo '{dev} /home/pratik ext4 defaults 0 0' | sudo tee -a /etc/fstab")
         ssh.run(f'sudo mount -a')
     else:
-        ssh.run(f'sudo mount -t ext4 {dev} /mnt/fe2_disk')
+        ssh.run(f'sudo mount -t ext4 {dev} /home/pratik')
 
-def _umount(ssh): ssh.run('sudo umount /mnt/fe2_disk')
+def _umount(ssh): ssh.run('sudo umount /home/pratik')
 
 def _launch_tmux(ssh, name=None):
     if name is None: name=ssh.inst.name
@@ -555,8 +560,3 @@ def _put_key(sftp, name):
 pysftp.Connection.__init__ = _pysftp_init
 pysftp.Connection.put_dir = _put_dir
 pysftp.Connection.put_key = _put_key
-
-def interact(region=''):
-    os.execvp('ipython', ['ipython', '--autocall=2', '-ic',
-                          f'import fastec2; e=fastec2.EC2("{region}")'])
-
