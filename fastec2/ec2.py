@@ -30,7 +30,7 @@ boto3.resources.base.ServiceResource.name = property(_boto3_name)
 def _boto3_repr(self):
     clname =  self.__class__.__name__
     if clname == 'ec2.Instance':
-        return f'{self.name} ({self.id} {self.instance_type} {self.state["Name"]}): {self.public_ip_address or "No public IP"}'
+        return f'{self.name} ({self.id} {self.instance_type} {self.state["Name"]}): {self.public_ip_address or "No public IP"}, {self.public_dns_name or "No public DNS"}'
     elif clname == 'ec2.Volume':
         return f'{self.name} ({self.id} {self.state}): {self.size}GB'
     elif clname == 'ec2.Snapshot':
@@ -313,7 +313,8 @@ class EC2():
     def request_spot(self, name, ami, keyname, disksize, instancetype, secgroupid, iops=None):
         spec = self._launch_spec(ami, keyname, disksize, instancetype, secgroupid, iops)
         sr = result(self._ec2.request_spot_instances(
-            LaunchSpecification=spec, InstanceInterruptionBehavior='stop', Type='persistent'))
+            LaunchSpecification=spec, InstanceInterruptionBehavior='stop',
+            Type='one-time'))
         assert len(sr)==1, 'spot request failed'
         srid = sr[0]['SpotInstanceRequestId']
         try: self.waitfor('spot_instance_request', 'fulfilled', srid)
@@ -352,7 +353,8 @@ class EC2():
             inst = self._ec2r.Instance(sr.instance_id)
         else:
             inst = self.request_demand(ami, keyname, disksize, instancetype, secgroupid, iops)
-        self.attach_volume(inst, volname)
+        vol = self.get_volume(volname)
+        self.attach_volume(inst, vol)
         self.waitfor('instance','running', inst.id)
         inst.load()
         self.create_name(inst.id, name)
@@ -366,7 +368,7 @@ class EC2():
                volname:str='pratik-moon',
                disksize:int=64, keyname:str='pratik-macbook',
                secgroupname:str='ssh', iops:int=None, spot:bool=False):
-        print(self.get_launch(name, ami, disksize, instancetype, keyname, secgroupname, iops, spot))
+        print(self.get_launch(name, ami, instancetype, volname, disksize, keyname, secgroupname, iops, spot))
 
     def instance(self, inst:str):
         "Show `Instance` details for `inst`"
