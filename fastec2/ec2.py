@@ -313,7 +313,8 @@ class EC2():
     def request_spot(self, name, ami, keyname, disksize, instancetype, secgroupid, iops=None):
         spec = self._launch_spec(ami, keyname, disksize, instancetype, secgroupid, iops)
         sr = result(self._ec2.request_spot_instances(
-            LaunchSpecification=spec, InstanceInterruptionBehavior='stop',
+            LaunchSpecification=spec,
+            #InstanceInterruptionBehavior='stop',
             Type='one-time'))
         assert len(sr)==1, 'spot request failed'
         srid = sr[0]['SpotInstanceRequestId']
@@ -333,7 +334,7 @@ class EC2():
 
     def _wait_ssh(self, inst):
         self.waitfor('instance', 'running', inst.id)
-        for i in range(720//5):
+        for i in range(1200//5):
             try:
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                     s.connect((inst.public_ip_address, 22))
@@ -342,7 +343,7 @@ class EC2():
             except (ConnectionRefusedError,BlockingIOError): time.sleep(5)
 
     def get_launch(self, name, ami, instancetype:str='p2.xlarge',
-                   volname:str='pratik-moon', disksize:int=64, keyname:str='default', secgroupname:str='ssh',
+                   volname:str=None, disksize:int=64, keyname:str=None, secgroupname:str='ssh',
                    iops:int=None, spot:bool=False):
         "Creates new instance `name` and returns `Instance` object"
         insts = self._describe('instances', {'tag:Name':name})
@@ -353,8 +354,9 @@ class EC2():
             inst = self._ec2r.Instance(sr.instance_id)
         else:
             inst = self.request_demand(ami, keyname, disksize, instancetype, secgroupid, iops)
-        vol = self.get_volume(volname)
-        self.attach_volume(inst, vol)
+        if volname:
+            vol = self.get_volume(volname)
+            self.attach_volume(inst, vol)
         self.waitfor('instance','running', inst.id)
         inst.load()
         self.create_name(inst.id, name)
@@ -365,8 +367,8 @@ class EC2():
     def ip(self, inst): return self.get_instance(inst).public_ip_address
 
     def launch(self, name, ami, instancetype:str='p2.xlarge',
-               volname:str='pratik-moon',
-               disksize:int=64, keyname:str='pratik-macbook',
+               volname:str=None,
+               disksize:int=64, keyname:str=None,
                secgroupname:str='ssh', iops:int=None, spot:bool=False):
         print(self.get_launch(name, ami, instancetype, volname, disksize, keyname, secgroupname, iops, spot))
 
@@ -396,23 +398,23 @@ class EC2():
 
     def connect(self, inst, ports=None, user=None, keyfile='~/.ssh/id_rsa'):
         """Replace python process with an ssh process connected to instance `inst`;
-        use `user@name` otherwise defaults to user 'pratik'. `ports` (int or list) creates tunnels"""
+        use `user@name` otherwise defaults to user 'ubuntu'. `ports` (int or list) creates tunnels"""
         if user is None:
             if isinstance(inst,str) and '@' in inst: user,inst = inst.split('@')
-            else: user = 'pratik'
+            else: user = 'ubuntu'
         inst = self.get_instance(inst)
         #tunnel = []
         tunnel = [f'-L {o}:localhost:{o}' for o in listify(ports)]
         os.execvp('ssh', ['ssh', f'{user}@{inst.public_ip_address}',
                           '-i', os.path.expanduser(keyfile), *tunnel])
 
-    def sshs(self, inst, user='pratik', keyfile='~/.ssh/id_rsa'):
+    def sshs(self, inst, user='ubuntu', keyfile='~/.ssh/id_rsa'):
         inst = self.get_instance(inst)
         ssh = self.ssh(inst, user=user, keyfile=keyfile)
         ftp = pysftp.Connection(ssh)
         return inst,ssh,ftp
 
-    def ssh(self, inst, user='pratik', keyfile='~/.ssh/id_rsa'):
+    def ssh(self, inst, user='ubuntu', keyfile='~/.ssh/id_rsa'):
         "Return a paramiko ssh connection objected connected to instance `inst`"
         inst = self.get_instance(inst)
         keyfile = os.path.expanduser(keyfile)
@@ -465,7 +467,7 @@ class EC2():
         ssh.send(f'echo To run: sudo systemctl start {script}')
         ssh.send(f'echo To monitor: journalctl -f -u {script}')
 
-    def script(self, scriptname, inst, user='pratik', keyfile='~/.ssh/id_rsa'):
+    def script(self, scriptname, inst, user='ubuntu', keyfile='~/.ssh/id_rsa'):
         inst = self.get_instance(inst)
         name = inst.name
         ssh = self.ssh(inst, user, keyfile)
@@ -501,23 +503,23 @@ def _setup_vol(ssh, vol):
     dev = _volid_to_dev(ssh, vol)
     cmds = [
         f'sudo mkfs -q -t ext4 {dev}',
-        f'sudo mkdir -p /home/pratik',
-        f'sudo mount {dev} /home/pratik',
-        f'sudo chown -R pratik:pratik /home/pratik',
+        f'sudo mkdir -p /home/ubuntu',
+        f'sudo mount {dev} /home/ubuntu',
+        f'sudo chown -R ubuntu:ubuntu /home/ubuntu',
     ]
     for c in cmds: ssh.run(c)
     ssh.write('/mnt/fe2_disk/chk', 'ok')
 
 def _mount(ssh, vol, perm=False):
     dev = _volid_to_dev(ssh, vol)
-    ssh.run(f'sudo mkdir -p /home/pratik')
+    ssh.run(f'sudo mkdir -p /home/ubuntu')
     if perm:
-        ssh.run(f"echo '{dev} /home/pratik ext4 defaults 0 0' | sudo tee -a /etc/fstab")
+        ssh.run(f"echo '{dev} /home/ubuntu ext4 defaults 0 0' | sudo tee -a /etc/fstab")
         ssh.run(f'sudo mount -a')
     else:
-        ssh.run(f'sudo mount -t ext4 {dev} /home/pratik')
+        ssh.run(f'sudo mount -t ext4 {dev} /home/ubuntu')
 
-def _umount(ssh): ssh.run('sudo umount /home/pratik')
+def _umount(ssh): ssh.run('sudo umount /home/ubuntu')
 
 def _launch_tmux(ssh, name=None):
     if name is None: name=ssh.inst.name
